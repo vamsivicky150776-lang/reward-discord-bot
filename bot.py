@@ -1,12 +1,13 @@
 import os
+import json
 import discord
 from discord.ext import commands
-import json
-import time
 
-TOKEN = os.getenv("BOT_TOKEN")
-ROLE_NAME = "reward members"  # case-insensitive
-DATA_FILE = "data.json"
+TOKEN = os.getenv("DISCORD_TOKEN")
+if not TOKEN:
+    raise ValueError("DISCORD_TOKEN not found in environment variables")
+
+DATA_FILE = "reward_data.json"
 
 intents = discord.Intents.default()
 intents.members = True
@@ -14,8 +15,7 @@ intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-def normalize(name):
-    return " ".join(name.lower().split())
+# ------------------ UTILITIES ------------------
 
 def load_data():
     if not os.path.exists(DATA_FILE):
@@ -27,61 +27,87 @@ def save_data(data):
     with open(DATA_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
-def get_role(guild):
-    for role in guild.roles:
-        if normalize(role.name) == normalize(ROLE_NAME):
-            return role
-    return None
+def normalize(text):
+    return text.replace(" ", "").lower()
+
+# ------------------ EVENTS ------------------
 
 @bot.event
 async def on_ready():
-    print(f"Bot logged in as {bot.user}")
+    print(f"✅ Logged in as {bot.user}")
+
+# ------------------ COMMANDS ------------------
 
 @bot.command()
-async def suggest(ctx, count: int):
-    role = get_role(ctx.guild)
-    if not role:
-        await ctx.send("❌ Role 'Reward Members' not found.")
-        return
-
-    members = role.members
-    if not members:
-        await ctx.send("❌ No members in Reward Members role.")
-        return
-
+@commands.has_permissions(administrator=True)
+async def reward(ctx, count: int, *members: discord.Member):
+    guild = ctx.guild
     data = load_data()
 
-    for m in members:
-        if str(m.id) not in data:
-            data[str(m.id)] = {"name": m.name, "total": 0, "last": 0}
+    # Find role "reward members" (case & space insensitive)
+    reward_role = None
+    for role in guild.roles:
+        if normalize(role.name) == "rewardmembers":
+            reward_role = role
+            break
 
-    ordered = sorted(
-        members,
-        key=lambda m: (data[str(m.id)]["total"], data[str(m.id)]["last"])
-    )
+    if not reward_role:
+        await ctx.send("❌ Role `reward members` not found.")
+        return
 
-    chosen = ordered[:count]
-    msg = f"🎁 **Suggested {count} Reward Recipients**\n\n"
-    for i, m in enumerate(chosen, 1):
-        info = data[str(m.id)]
-        msg += f"{i}. {m.mention} — {info['total']} rewards\n"
+    role_members = set(reward_role.members)
+    eligible = [m for m in members if m in role_members]
+
+    if not eligible:
+        await ctx.send("❌ No eligible members from `reward members` role.")
+        return
+
+    # Initialize data
+    for m in role_members:
+        data.setdefault(str(m.id), 0)
+
+    # Sort by least rewards first
+    eligible.sort(key=lambda m: data.get(str(m.id), 0))
+
+    selected = eligible[:count]
+
+    if not selected:
+        await ctx.send("❌ No members selected.")
+        return
+
+    # Update counts
+    for m in selected:
+        data[str(m.id)] += 1
 
     save_data(data)
+
+    msg = "**🏆 Reward Winners:**\n"
+    for m in selected:
+        msg += f"- {m.mention} (total: {data[str(m.id)]})\n"
+
     await ctx.send(msg)
 
 @bot.command()
-async def confirm(ctx, *users: discord.Member):
+async def rewardstats(ctx):
     data = load_data()
-    now = int(time.time())
+    if not data:
+        await ctx.send("No reward data found.")
+        return
 
-    for u in users:
-        uid = str(u.id)
-        if uid not in data:
-            data[uid] = {"name": u.name, "total": 0, "last": 0}
-        data[uid]["total"] += 1
-        data[uid]["last"] = now
+    lines = ["**📊 Reward Stats:**"]
+    for uid, count in sorted(data.items(), key=lambda x: x[1], reverse=True):
+        member = ctx.guild.get_member(int(uid))
+        if member:
+            lines.append(f"{member.display_name}: {count}")
 
-    save_data(data)
-    await ctx.send("✅ Rewards recorded successfully.")
+    await ctx.send("\n".join(lines))
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def rewardreset(ctx):
+    save_data({})
+    await ctx.send("🔄 Reward data reset successfully.")
+
+# ------------------ RUN ------------------
 
 bot.run(TOKEN)
