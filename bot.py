@@ -54,10 +54,6 @@ class MenuView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=300)
 
-    @discord.ui.button(label="🎁 Give Rewards", style=discord.ButtonStyle.primary)
-    async def give_rewards(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("Feature already working. Use existing flow.")
-
     @discord.ui.button(label="📊 View Stats", style=discord.ButtonStyle.secondary)
     async def view_stats(self, interaction: discord.Interaction, button: discord.ui.Button):
         role = get_reward_role(interaction.guild)
@@ -65,12 +61,20 @@ class MenuView(discord.ui.View):
             await interaction.response.send_message("❌ `reward members` role not found.")
             return
 
-        stats_text = ""
+        # Collect member stats
+        stats_list = []
         for m in role.members:
             count = reward_data.get(str(m.id), 0)
-            stats_text += f"{m.display_name}: {count}\n"
+            stats_list.append((m.display_name, count))
 
-        await interaction.response.send_message(f"📊 **Reward Stats:**\n{stats_text}")
+        # Sort from highest to lowest
+        stats_list.sort(key=lambda x: x[1], reverse=True)
+
+        stats_text = ""
+        for name, count in stats_list:
+            stats_text += f"{name}: {count}\n"
+
+        await interaction.response.send_message(f"📊 **Reward Stats (High → Low):**\n{stats_text}")
 
     @discord.ui.button(label="📥 Import Old Stats", style=discord.ButtonStyle.success)
     async def import_stats(self, interaction: discord.Interaction, button: discord.ui.Button):
