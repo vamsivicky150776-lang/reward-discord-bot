@@ -70,7 +70,6 @@ class MenuView(discord.ui.View):
             return
 
         await interaction.followup.send("👥 Mention eligible members:")
-
         msg2 = await bot.wait_for("message", check=check)
 
         role = get_reward_role(interaction.guild)
@@ -90,10 +89,6 @@ class MenuView(discord.ui.View):
 
         mentioned.sort(key=lambda m: reward_data[str(m.id)])
         selected = mentioned[:count]
-
-        if not selected:
-            await interaction.followup.send("❌ No users selected.")
-            return
 
         winners_text = "\n".join(
             f"- {m.mention} (received {reward_data[str(m.id)]} times)"
@@ -121,6 +116,12 @@ class MenuView(discord.ui.View):
 
         await interaction.response.send_message(f"📊 **Reward Stats:**\n{stats_text}")
 
+    @discord.ui.button(label="🔄 Reset All Data", style=discord.ButtonStyle.danger)
+    async def reset_data(self, interaction: discord.Interaction, button: discord.ui.Button):
+        reward_data.clear()
+        save_data(reward_data)
+        await interaction.response.send_message("🔄 All reward data has been reset.")
+
 # ---------------- CONFIRM VIEW ----------------
 
 class ConfirmView(discord.ui.View):
@@ -134,7 +135,6 @@ class ConfirmView(discord.ui.View):
             reward_data[str(m.id)] += 1
 
         save_data(reward_data)
-
         await interaction.response.send_message("✅ Rewards confirmed and saved.")
         self.stop()
 
