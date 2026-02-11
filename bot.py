@@ -41,14 +41,14 @@ def get_reward_role(guild):
             return role
     return None
 
-# ---------------- BOT READY ----------------
+# ---------------- READY ----------------
 
 @bot.event
 async def on_ready():
     await tree.sync()
     print(f"✅ Logged in as {bot.user}")
 
-# ---------------- MENU VIEW ----------------
+# ---------------- MENU ----------------
 
 class MenuView(discord.ui.View):
     def __init__(self):
@@ -56,31 +56,33 @@ class MenuView(discord.ui.View):
 
     @discord.ui.button(label="🎁 Give Rewards", style=discord.ButtonStyle.primary)
     async def give_rewards(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("How many rewards do you want to give?", ephemeral=True)
+        await interaction.response.send_message("🎁 How many rewards do you want to give?")
 
         def check(m):
             return m.author == interaction.user and m.channel == interaction.channel
 
         msg = await bot.wait_for("message", check=check)
+
         try:
             count = int(msg.content)
         except:
-            await interaction.followup.send("Invalid number.", ephemeral=True)
+            await interaction.followup.send("❌ Please enter a valid number.")
             return
 
-        await interaction.followup.send("Mention eligible members:", ephemeral=True)
+        await interaction.followup.send("👥 Mention eligible members:")
+
         msg2 = await bot.wait_for("message", check=check)
 
         role = get_reward_role(interaction.guild)
         if not role:
-            await interaction.followup.send("`reward members` role not found.", ephemeral=True)
+            await interaction.followup.send("❌ `reward members` role not found.")
             return
 
         role_members = {m.id for m in role.members}
         mentioned = [m for m in msg2.mentions if m.id in role_members]
 
         if not mentioned:
-            await interaction.followup.send("No valid members mentioned.", ephemeral=True)
+            await interaction.followup.send("❌ No valid members mentioned.")
             return
 
         for m in mentioned:
@@ -90,7 +92,7 @@ class MenuView(discord.ui.View):
         selected = mentioned[:count]
 
         if not selected:
-            await interaction.followup.send("No users selected.", ephemeral=True)
+            await interaction.followup.send("❌ No users selected.")
             return
 
         winners_text = "\n".join(
@@ -99,17 +101,17 @@ class MenuView(discord.ui.View):
         )
 
         confirm_view = ConfirmView(selected)
+
         await interaction.followup.send(
             f"🎯 **Suggested Winners:**\n{winners_text}",
-            view=confirm_view,
-            ephemeral=False
+            view=confirm_view
         )
 
     @discord.ui.button(label="📊 View Stats", style=discord.ButtonStyle.secondary)
     async def view_stats(self, interaction: discord.Interaction, button: discord.ui.Button):
         role = get_reward_role(interaction.guild)
         if not role:
-            await interaction.response.send_message("`reward members` role not found.", ephemeral=True)
+            await interaction.response.send_message("❌ `reward members` role not found.")
             return
 
         stats_text = ""
@@ -117,7 +119,7 @@ class MenuView(discord.ui.View):
             count = reward_data.get(str(m.id), 0)
             stats_text += f"{m.display_name}: {count}\n"
 
-        await interaction.response.send_message(f"📊 **Reward Stats:**\n{stats_text}", ephemeral=True)
+        await interaction.response.send_message(f"📊 **Reward Stats:**\n{stats_text}")
 
 # ---------------- CONFIRM VIEW ----------------
 
@@ -132,6 +134,7 @@ class ConfirmView(discord.ui.View):
             reward_data[str(m.id)] += 1
 
         save_data(reward_data)
+
         await interaction.response.send_message("✅ Rewards confirmed and saved.")
         self.stop()
 
