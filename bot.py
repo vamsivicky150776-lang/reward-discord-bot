@@ -2,6 +2,11 @@ import os
 import json
 import discord
 from discord.ext import commands
+from discord import app_commands
+
+TOKEN = os.getenv("DISCORD_TOKEN")
+if not TOKEN:
+    raise RuntimeError("DISCORD_TOKEN missing")
 
 DATA_FILE = "rewards.json"
 ROLE_NAME = "reward members"
@@ -11,8 +16,9 @@ intents.message_content = True
 intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
+tree = bot.tree
 
-# ------------------ STORAGE ------------------
+# ---------------- STORAGE ----------------
 
 def load_data():
     if not os.path.exists(DATA_FILE):
@@ -25,15 +31,6 @@ def save_data(data):
         json.dump(data, f, indent=2)
 
 reward_data = load_data()
-last_suggestion = []
-
-# ------------------ EVENTS ------------------
-
-@bot.event
-async def on_ready():
-    print(f"✅ Logged in as {bot.user}")
-
-# ------------------ HELPERS ------------------
 
 def normalize(text):
     return text.lower().replace(" ", "")
@@ -44,81 +41,110 @@ def get_reward_role(guild):
             return role
     return None
 
-# ------------------ COMMANDS ------------------
+# ---------------- BOT READY ----------------
 
-@bot.command()
-async def ping(ctx):
-    await ctx.send("🏓 Pong! Bot is online.")
+@bot.event
+async def on_ready():
+    await tree.sync()
+    print(f"✅ Logged in as {bot.user}")
 
-@bot.command()
-async def suggest(ctx, count: int, *members: discord.Member):
-    global last_suggestion
+# ---------------- MENU VIEW ----------------
 
-    role = get_reward_role(ctx.guild)
-    if not role:
-        await ctx.send("❌ `reward members` role not found.")
-        return
+class MenuView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=300)
 
-    role_members = {m.id for m in role.members}
-    eligible = [m for m in members if m.id in role_members]
+    @discord.ui.button(label="🎁 Give Rewards", style=discord.ButtonStyle.primary)
+    async def give_rewards(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("How many rewards do you want to give?", ephemeral=True)
 
-    if not eligible:
-        await ctx.send("❌ No mentioned users are in `reward members` role.")
-        return
+        def check(m):
+            return m.author == interaction.user and m.channel == interaction.channel
 
-    for m in eligible:
-        reward_data.setdefault(str(m.id), 0)
+        msg = await bot.wait_for("message", check=check)
+        try:
+            count = int(msg.content)
+        except:
+            await interaction.followup.send("Invalid number.", ephemeral=True)
+            return
 
-    eligible.sort(key=lambda m: reward_data[str(m.id)])
+        await interaction.followup.send("Mention eligible members:", ephemeral=True)
+        msg2 = await bot.wait_for("message", check=check)
 
-    selected = eligible[:count]
-    last_suggestion = selected
+        role = get_reward_role(interaction.guild)
+        if not role:
+            await interaction.followup.send("`reward members` role not found.", ephemeral=True)
+            return
 
-    if not selected:
-        await ctx.send("❌ No users to suggest.")
-        return
+        role_members = {m.id for m in role.members}
+        mentioned = [m for m in msg2.mentions if m.id in role_members]
 
-    msg = "🎯 **Suggested Reward Winners:**\n"
-    for m in selected:
-        msg += f"- {m.mention} (received {reward_data[str(m.id)]} times)\n"
+        if not mentioned:
+            await interaction.followup.send("No valid members mentioned.", ephemeral=True)
+            return
 
-    msg += "\nType `!confirm` to finalize."
-    await ctx.send(msg)
+        for m in mentioned:
+            reward_data.setdefault(str(m.id), 0)
 
-@bot.command()
-async def confirm(ctx):
-    global last_suggestion
+        mentioned.sort(key=lambda m: reward_data[str(m.id)])
+        selected = mentioned[:count]
 
-    if not last_suggestion:
-        await ctx.send("❌ No suggestion to confirm.")
-        return
+        if not selected:
+            await interaction.followup.send("No users selected.", ephemeral=True)
+            return
 
-    for m in last_suggestion:
-        reward_data[str(m.id)] += 1
+        winners_text = "\n".join(
+            f"- {m.mention} (received {reward_data[str(m.id)]} times)"
+            for m in selected
+        )
 
-    save_data(reward_data)
-    last_suggestion = []
+        confirm_view = ConfirmView(selected)
+        await interaction.followup.send(
+            f"🎯 **Suggested Winners:**\n{winners_text}",
+            view=confirm_view,
+            ephemeral=False
+        )
 
-    await ctx.send("✅ Rewards confirmed and saved.")
+    @discord.ui.button(label="📊 View Stats", style=discord.ButtonStyle.secondary)
+    async def view_stats(self, interaction: discord.Interaction, button: discord.ui.Button):
+        role = get_reward_role(interaction.guild)
+        if not role:
+            await interaction.response.send_message("`reward members` role not found.", ephemeral=True)
+            return
 
-@bot.command()
-async def stats(ctx):
-    role = get_reward_role(ctx.guild)
-    if not role:
-        await ctx.send("❌ `reward members` role not found.")
-        return
+        stats_text = ""
+        for m in role.members:
+            count = reward_data.get(str(m.id), 0)
+            stats_text += f"{m.display_name}: {count}\n"
 
-    msg = "📊 **Reward Stats:**\n"
-    for m in role.members:
-        count = reward_data.get(str(m.id), 0)
-        msg += f"- {m.display_name}: {count}\n"
+        await interaction.response.send_message(f"📊 **Reward Stats:**\n{stats_text}", ephemeral=True)
 
-    await ctx.send(msg)
+# ---------------- CONFIRM VIEW ----------------
 
-# ------------------ START ------------------
+class ConfirmView(discord.ui.View):
+    def __init__(self, winners):
+        super().__init__(timeout=300)
+        self.winners = winners
 
-TOKEN = os.getenv("DISCORD_TOKEN")
-if not TOKEN:
-    raise RuntimeError("DISCORD_TOKEN missing")
+    @discord.ui.button(label="✅ Confirm", style=discord.ButtonStyle.success)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        for m in self.winners:
+            reward_data[str(m.id)] += 1
+
+        save_data(reward_data)
+        await interaction.response.send_message("✅ Rewards confirmed and saved.")
+        self.stop()
+
+    @discord.ui.button(label="❌ Cancel", style=discord.ButtonStyle.danger)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("❌ Reward process cancelled.")
+        self.stop()
+
+# ---------------- SLASH COMMAND ----------------
+
+@tree.command(name="start", description="Open reward system menu")
+async def start(interaction: discord.Interaction):
+    view = MenuView()
+    await interaction.response.send_message("🎮 **Reward System Menu**", view=view)
 
 bot.run(TOKEN)
