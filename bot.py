@@ -48,26 +48,97 @@ async def on_ready():
     await tree.sync()
     print(f"✅ Logged in as {bot.user}")
 
+# ---------------- CONFIRM VIEW ----------------
+
+class ConfirmView(discord.ui.View):
+    def __init__(self, winners):
+        super().__init__(timeout=300)
+        self.winners = winners
+
+    @discord.ui.button(label="✅ Confirm", style=discord.ButtonStyle.success)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        for m in self.winners:
+            reward_data[str(m.id)] += 1
+
+        save_data(reward_data)
+        await interaction.response.send_message("✅ Rewards confirmed and saved.")
+        self.stop()
+
+    @discord.ui.button(label="❌ Cancel", style=discord.ButtonStyle.danger)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("❌ Reward process cancelled.")
+        self.stop()
+
 # ---------------- MENU ----------------
 
 class MenuView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=300)
 
+    @discord.ui.button(label="🎁 Give Rewards", style=discord.ButtonStyle.primary)
+    async def give_rewards(self, interaction: discord.Interaction, button: discord.ui.Button):
+
+        await interaction.response.send_message("🎁 How many rewards do you want to give?")
+
+        def check(m):
+            return m.author == interaction.user and m.channel == interaction.channel
+
+        msg = await bot.wait_for("message", check=check)
+
+        try:
+            count = int(msg.content)
+        except:
+            await interaction.followup.send("❌ Please enter a valid number.")
+            return
+
+        await interaction.followup.send("👥 Mention eligible members:")
+        msg2 = await bot.wait_for("message", check=check)
+
+        role = get_reward_role(interaction.guild)
+        if not role:
+            await interaction.followup.send("❌ `reward members` role not found.")
+            return
+
+        role_members = {m.id for m in role.members}
+        mentioned = [m for m in msg2.mentions if m.id in role_members]
+
+        if not mentioned:
+            await interaction.followup.send("❌ No valid members mentioned.")
+            return
+
+        for m in mentioned:
+            reward_data.setdefault(str(m.id), 0)
+
+        # Sort by lowest rewards first (fairness logic)
+        mentioned.sort(key=lambda m: reward_data[str(m.id)])
+        selected = mentioned[:count]
+
+        winners_text = "\n".join(
+            f"- {m.mention} (received {reward_data[str(m.id)]} times)"
+            for m in selected
+        )
+
+        confirm_view = ConfirmView(selected)
+
+        await interaction.followup.send(
+            f"🎯 **Suggested Winners:**\n{winners_text}",
+            view=confirm_view
+        )
+
     @discord.ui.button(label="📊 View Stats", style=discord.ButtonStyle.secondary)
     async def view_stats(self, interaction: discord.Interaction, button: discord.ui.Button):
+
         role = get_reward_role(interaction.guild)
         if not role:
             await interaction.response.send_message("❌ `reward members` role not found.")
             return
 
-        # Collect member stats
         stats_list = []
         for m in role.members:
             count = reward_data.get(str(m.id), 0)
             stats_list.append((m.display_name, count))
 
-        # Sort from highest to lowest
+        # Sort high → low
         stats_list.sort(key=lambda x: x[1], reverse=True)
 
         stats_text = ""
@@ -78,6 +149,7 @@ class MenuView(discord.ui.View):
 
     @discord.ui.button(label="📥 Import Old Stats", style=discord.ButtonStyle.success)
     async def import_stats(self, interaction: discord.Interaction, button: discord.ui.Button):
+
         await interaction.response.send_message("📥 Paste the old Reward Stats message now:")
 
         def check(m):
